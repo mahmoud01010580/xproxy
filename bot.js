@@ -76,6 +76,7 @@ const translations = {
 
 async function verifyPersonalBinancePay(userTxId) {
     if (!process.env.BINANCE_API_KEY || !process.env.BINANCE_SECRET_KEY) {
+        console.log('⚠️ Binance API keys are not configured in .env');
         return { success: false, reason: 'api_not_configured' };
     }
 
@@ -115,6 +116,7 @@ async function verifyPersonalBinancePay(userTxId) {
         }
         return { success: false, reason: 'api_failed' };
     } catch (error) {
+        console.error('❌ Binance Personal Pay API Error:', error.response?.data || error.message);
         return { success: false, reason: 'api_error' };
     }
 }
@@ -140,6 +142,8 @@ function getCountryFlag(countryInput) {
 }
 
 mongoose.connect(process.env.MONGO_URI).then(async () => {
+    console.log('📦 Connected to MongoDB Atlas successfully!');
+    
     const planCount = await Plan.countDocuments();
     if (planCount === 0) {
         await Plan.create({
@@ -159,7 +163,9 @@ mongoose.connect(process.env.MONGO_URI).then(async () => {
             instructions: 'Send payment via Binance Pay, then copy your Transaction ID and send it here to add balance automatically.'
         });
     }
-}).catch(err => {});
+}).catch(err => {
+    console.error('❌ MongoDB Connection Error:', err);
+});
 
 bot.use(session());
 
@@ -257,6 +263,7 @@ bot.on('text', async (ctx, next) => {
                 { parse_mode: 'Markdown', ...langKeyboard }
             );
         } catch (err) {
+            console.error('❌ Registration Error:', err);
             session.step = null;
             return ctx.reply('❌ An error occurred during registration. Try sending /start again.');
         }
@@ -279,7 +286,9 @@ bot.on('text', async (ctx, next) => {
             if (checkRes.data && checkRes.data.data && checkRes.data.data.available === false) {
                 return ctx.reply('❌ This username is already in use on this server. Please choose another username:');
             }
-        } catch (e) {}
+        } catch (e) {
+            console.error('❌ Check Username API Error:', e.response?.data || e.message);
+        }
 
         session.proxyUsername = text;
         session.step = 'waiting_proxy_password';
@@ -353,12 +362,15 @@ bot.on('text', async (ctx, next) => {
             });
 
         } catch (error) {
+            console.error('❌ Proxy Purchase Error:', error.response?.data || error.message);
             try {
                 const planToRefund = await Plan.findById(planId);
                 if (planToRefund) {
                     await User.updateOne({ telegramId }, { $inc: { balance: planToRefund.myPriceUsd } });
                 }
-            } catch (rollbackErr) {}
+            } catch (rollbackErr) {
+                console.error('❌ Rollback Error:', rollbackErr);
+            }
 
             const errMessage = error.response?.data?.message || 'Error occurred during proxy creation';
             return ctx.reply(`❌ ${errMessage}`, Markup.inlineKeyboard([[Markup.button.callback('⬅️ Main Menu', 'main_menu')]]));
@@ -407,6 +419,7 @@ bot.on('text', async (ctx, next) => {
             await ctx.reply(`✅ **Proxy authentication updated successfully!**\n- **Username:** \`${newUsername}\`\n- **Password:** \`${newPassword}\``, { parse_mode: 'Markdown' });
             await refreshProxyMessage(ctx, publicId, lang);
         } catch (error) {
+            console.error('❌ Update Auth Error:', error.response?.data || error.message);
             const errMsg = error.response?.data?.message || 'Error updating proxy authentication';
             return ctx.reply(`❌ ${errMsg}`);
         }
@@ -447,6 +460,7 @@ bot.on('text', async (ctx, next) => {
                         amount: verification.amount
                     });
                 } catch (dbErr) {
+                    console.error('❌ Duplicate Transaction Creation Error:', dbErr);
                     await ctx.reply('❌ **Transaction already processed.** Duplicate payment rejected.', { parse_mode: 'Markdown' });
                     return sendMainMenu(ctx);
                 }
@@ -506,7 +520,9 @@ bot.on('text', async (ctx, next) => {
                     parse_mode: 'Markdown',
                     ...adminKeyboard
                 });
-            } catch (err) {}
+            } catch (err) {
+                console.error('❌ Failed to send message to admin:', err);
+            }
         }
 
         return sendMainMenu(ctx);
@@ -541,6 +557,7 @@ bot.on('text', async (ctx, next) => {
             } catch (e) {}
 
         } catch (error) {
+            console.error('❌ Custom Admin Approve Error:', error);
             await ctx.reply('❌ Error processing custom approval.');
         }
 
@@ -633,6 +650,7 @@ bot.action('menu_profile', async (ctx) => {
                     ? `👑 **لوحة تحكم المشرف:**\n\n- **الاسم:** ${apiData.name}\n- **رصيد الداتابيز:** $${dbUser ? dbUser.balance.toFixed(2) : '0.00'}\n- **رصيد السيرفر API:** $${apiData.balance_usd}\n- **إجمالي البروكسيات النشطة:** ${apiData.active_proxies}\n- **بادئة مفتاح الـ API:** \`${apiData.api_key_prefix}\`\n- **Telegram ID:** \`${telegramId}\``
                     : `👑 **Admin Dashboard & Profile:**\n\n- **Name:** ${apiData.name}\n- **Database Balance:** $${dbUser ? dbUser.balance.toFixed(2) : '0.00'}\n- **Server API Balance:** $${apiData.balance_usd}\n- **Active Proxies (Server Total):** ${apiData.active_proxies}\n- **API Key Prefix:** \`${apiData.api_key_prefix}\`\n- **Telegram ID:** \`${telegramId}\``;
             } catch (err) {
+                console.error('❌ Admin Profile API Error:', err.response?.data || err.message);
                 message = `👑 **Admin Dashboard (Offline Mode):**\n\n- **Username:** \`${dbUser ? dbUser.username : 'Admin'}\`\n- **Balance:** $${dbUser ? dbUser.balance.toFixed(2) : '0.00'}\n- **Telegram ID:** \`${telegramId}\``;
             }
         } else {
@@ -654,6 +672,7 @@ bot.action('menu_profile', async (ctx) => {
             ...Markup.inlineKeyboard(keyboardButtons)
         });
     } catch (error) {
+        console.error('❌ Profile Error:', error);
         try { await ctx.answerCbQuery('❌ Error loading profile data', { show_alert: true }); } catch (e) {}
     }
 });
@@ -669,7 +688,9 @@ bot.action('menu_ledger', async (ctx) => {
         try {
             const response = await api.get('/ledger');
             items = response.data?.data || response.data || [];
-        } catch (apiErr) {}
+        } catch (apiErr) {
+            console.error('❌ Ledger API Fetch Error:', apiErr.response?.data || apiErr.message);
+        }
 
         let message = '📜 **Latest Wallet Ledger (Last Transactions):**\n\n';
         if (!Array.isArray(items) || items.length === 0) {
@@ -685,6 +706,7 @@ bot.action('menu_ledger', async (ctx) => {
             ...Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back to Profile', 'menu_profile')]])
         });
     } catch (error) {
+        console.error('❌ Ledger Handler Error:', error);
         try { await ctx.answerCbQuery('❌ Error loading ledger', { show_alert: true }); } catch (e) {}
     }
 });
@@ -711,6 +733,7 @@ bot.action('menu_plans', async (ctx) => {
             ...Markup.inlineKeyboard([[Markup.button.callback(lang === 'ar' ? '⬅️ القائمة الرئيسية' : '⬅️ Main Menu', 'main_menu')]])
         });
     } catch (error) {
+        console.error('❌ Plans Error:', error);
         try { await ctx.answerCbQuery('❌ Error loading plans', { show_alert: true }); } catch (e) {}
     }
 });
@@ -737,6 +760,7 @@ bot.action('menu_support', async (ctx) => {
             ...Markup.inlineKeyboard([[Markup.button.callback(lang === 'ar' ? '⬅️ القائمة الرئيسية' : '⬅️ Main Menu', 'main_menu')]])
         });
     } catch (error) {
+        console.error('❌ Support Error:', error);
         try { await ctx.answerCbQuery('❌ Error loading support info', { show_alert: true }); } catch (e) {}
     }
 });
@@ -768,6 +792,7 @@ bot.action('menu_add_balance', async (ctx) => {
             ...Markup.inlineKeyboard(inlineButtons)
         });
     } catch (error) {
+        console.error('❌ Payment Methods Error:', error);
         try { await ctx.answerCbQuery('❌ Error loading payment methods', { show_alert: true }); } catch (e) {}
     }
 });
@@ -798,6 +823,7 @@ bot.action(/^pay_method_(.+)$/, async (ctx) => {
             ...inlineKeyboard
         });
     } catch (error) {
+        console.error('❌ Method Select Error:', error);
         try { await ctx.answerCbQuery('❌ An error occurred', { show_alert: true }); } catch (e) {}
     }
 });
@@ -833,7 +859,9 @@ bot.action(/^admin_reject_(\d+)$/, async (ctx) => {
         try {
             await bot.telegram.sendMessage(targetUserId, `❌ **Your payment request was rejected.** Please contact support if you think this is a mistake.`);
         } catch (e) {}
-    } catch (error) {}
+    } catch (error) {
+        console.error('❌ Reject Error:', error);
+    }
 });
 
 bot.action('menu_buy_proxy', async (ctx) => {
@@ -867,6 +895,7 @@ bot.action('menu_buy_proxy', async (ctx) => {
             ...Markup.inlineKeyboard(inlineButtons)
         });
     } catch (error) {
+        console.error('❌ API Error (menu_buy_proxy):', error.response?.data || error.message);
         try { await ctx.answerCbQuery('❌ Error fetching countries', { show_alert: true }); } catch (e) {}
     }
 });
@@ -913,6 +942,7 @@ bot.action(/^cnt_(.+)$/, async (ctx) => {
             ...Markup.inlineKeyboard(inlineButtons)
         });
     } catch (error) {
+        console.error('❌ Country Selection Error:', error.response?.data || error.message);
         try { await ctx.answerCbQuery('❌ An error occurred', { show_alert: true }); } catch (e) {}
     }
 });
@@ -959,6 +989,7 @@ bot.action(/^dur_([0-9a-fA-F]{24})$/, async (ctx) => {
             ...Markup.inlineKeyboard(inlineButtons)
         });
     } catch (error) {
+        console.error('❌ Server List Error:', error.response?.data || error.message);
         try { await ctx.answerCbQuery('❌ An error occurred', { show_alert: true }); } catch (e) {}
     }
 });
@@ -1057,7 +1088,9 @@ bot.action('menu_proxies', async (ctx) => {
                 ]);
 
                 await ctx.reply(details, { parse_mode: 'Markdown', ...inlineKeyboard });
-            } catch (err) {}
+            } catch (err) {
+                console.error(`❌ Error fetching proxy ${publicId}:`, err.response?.data || err.message);
+            }
         }
 
         await User.updateOne({ telegramId }, { proxies: activeProxiesOnServer });
@@ -1068,6 +1101,7 @@ bot.action('menu_proxies', async (ctx) => {
         }
 
     } catch (error) {
+        console.error('❌ Proxies Menu Error:', error);
         try { await ctx.answerCbQuery('Error loading proxies', { show_alert: true }); } catch (e) {}
     }
 });
@@ -1108,7 +1142,9 @@ async function refreshProxyMessage(ctx, publicId, lang) {
         ]);
 
         await ctx.editMessageText(details, { parse_mode: 'Markdown', ...inlineKeyboard });
-    } catch (e) {}
+    } catch (e) {
+        console.error('❌ Refresh Proxy Message Error:', e);
+    }
 }
 
 bot.action(/^ext_(.+)$/, async (ctx) => {
@@ -1125,6 +1161,7 @@ bot.action(/^ext_(.+)$/, async (ctx) => {
         await refreshProxyMessage(ctx, publicId, lang);
         try { await ctx.answerCbQuery('Proxy extended successfully 🚀', { show_alert: true }); } catch (e) {}
     } catch (error) {
+        console.error('❌ Extend Proxy Error:', error.response?.data || error.message);
         const errMsg = error.response?.data?.message || 'Error extending proxy';
         try { await ctx.answerCbQuery(`❌ ${errMsg}`, { show_alert: true }); } catch (e) {}
     }
@@ -1149,6 +1186,7 @@ bot.action(/^switchproto_(.+)$/, async (ctx) => {
         await refreshProxyMessage(ctx, publicId, lang);
         try { await ctx.answerCbQuery(`✅ Protocol switched to ${newProto.toUpperCase()} successfully!`, { show_alert: true }); } catch (e) {}
     } catch (error) {
+        console.error('❌ Switch Protocol Error:', error.response?.data || error.message);
         const errMsg = error.response?.data?.message || 'Error switching protocol';
         try { await ctx.answerCbQuery(`❌ ${errMsg}`, { show_alert: true }); } catch (e) {}
     }
@@ -1184,6 +1222,7 @@ bot.action(/^switchsrv_(.+)$/, async (ctx) => {
             ...Markup.inlineKeyboard(inlineButtons)
         });
     } catch (error) {
+        console.error('❌ Switch Server List Error:', error.response?.data || error.message);
         try { await ctx.answerCbQuery('❌ Error loading servers', { show_alert: true }); } catch (e) {}
     }
 });
@@ -1204,6 +1243,7 @@ bot.action(/^exec_switch_(.+)_(\d+)$/, async (ctx) => {
         const lang = dbUser ? dbUser.language : 'en';
         await refreshProxyMessage(ctx, publicId, lang);
     } catch (error) {
+        console.error('❌ Exec Switch Server Error:', error.response?.data || error.message);
         const errMsg = error.response?.data?.message || 'Error switching server';
         try { await ctx.answerCbQuery(`❌ ${errMsg}`, { show_alert: true }); } catch (e) {}
     }
@@ -1228,11 +1268,14 @@ bot.action(/^upauth_(.+)$/, async (ctx) => {
         );
         try { await ctx.answerCbQuery(); } catch (e) {}
     } catch (error) {
+        console.error('❌ Upauth Prompt Error:', error);
         try { await ctx.answerCbQuery('❌ An error occurred', { show_alert: true }); } catch (e) {}
     }
 });
 
-bot.launch().then(() => {});
+bot.launch().then(() => {
+    console.log('🤖 Telegram Bot is running successfully!');
+});
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
