@@ -19,6 +19,20 @@ function isEnglishOnly(text) {
     return /^[A-Za-z0-9_@#$.!-]+$/.test(text);
 }
 
+// دالة آمنة لتحديث رسائل تليجرام لمنع الـ Crash بسبب عدم وجود تغيير في النص
+async function safeEditMessageText(ctx, text, extra = {}) {
+    try {
+        return await ctx.editMessageText(text, extra);
+    } catch (error) {
+        if (error.description && error.description.includes('message is not modified')) {
+            // تجاهل الخطأ بهدوء لأنه مجرد تكرار لنفس محتوى الرسالة
+            try { await ctx.answerCbQuery(); } catch (e) {}
+            return;
+        }
+        console.error('❌ Safe Edit Message Error:', error.message);
+    }
+}
+
 const translations = {
     en: {
         welcomeMain: 'Welcome to your Proxy Dashboard 🚀',
@@ -592,7 +606,7 @@ bot.action('change_language', async (ctx) => {
         [Markup.button.callback(currentLang === 'ar' ? '⬅️ القائمة الرئيسية' : '⬅️ Main Menu', 'main_menu')]
     ]);
 
-    await ctx.editMessageText('🌐 **Choose your language / اختر لغتك:**', {
+    await safeEditMessageText(ctx, '🌐 **Choose your language / اختر لغتك:**', {
         parse_mode: 'Markdown',
         ...langKeyboard
     });
@@ -625,7 +639,7 @@ const sendMainMenu = async (ctx) => {
     ]);
 
     if (ctx.callbackQuery) {
-        return ctx.editMessageText(welcomeMsg, keyboard);
+        return safeEditMessageText(ctx, welcomeMsg, keyboard);
     }
     return ctx.reply(welcomeMsg, keyboard);
 };
@@ -667,7 +681,7 @@ bot.action('menu_profile', async (ctx) => {
             keyboardButtons.unshift([Markup.button.callback(lang === 'ar' ? '📜 سجل المعاملات' : '📜 View Ledger History', 'menu_ledger')]);
         }
 
-        await ctx.editMessageText(message, {
+        await safeEditMessageText(ctx, message, {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard(keyboardButtons)
         });
@@ -701,7 +715,7 @@ bot.action('menu_ledger', async (ctx) => {
             });
         }
 
-        await ctx.editMessageText(message, {
+        await safeEditMessageText(ctx, message, {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard([[Markup.button.callback('⬅️ Back to Profile', 'menu_profile')]])
         });
@@ -728,7 +742,7 @@ bot.action('menu_plans', async (ctx) => {
             });
         }
 
-        await ctx.editMessageText(message, {
+        await safeEditMessageText(ctx, message, {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard([[Markup.button.callback(lang === 'ar' ? '⬅️ القائمة الرئيسية' : '⬅️ Main Menu', 'main_menu')]])
         });
@@ -755,7 +769,7 @@ bot.action('menu_support', async (ctx) => {
             });
         }
 
-        await ctx.editMessageText(message, {
+        await safeEditMessageText(ctx, message, {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard([[Markup.button.callback(lang === 'ar' ? '⬅️ القائمة الرئيسية' : '⬅️ Main Menu', 'main_menu')]])
         });
@@ -770,7 +784,7 @@ bot.action('menu_add_balance', async (ctx) => {
         const methods = await PaymentMethod.find({});
         
         if (methods.length === 0) {
-            return ctx.editMessageText(
+            return safeEditMessageText(ctx, 
                 '❌ No payment methods available right now. Please contact support.',
                 Markup.inlineKeyboard([[Markup.button.callback('⬅️ Main Menu', 'main_menu')]])
             );
@@ -787,7 +801,7 @@ bot.action('menu_add_balance', async (ctx) => {
         
         inlineButtons.push([Markup.button.callback('⬅️ Main Menu', 'main_menu')]);
 
-        await ctx.editMessageText(message, {
+        await safeEditMessageText(ctx, message, {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard(inlineButtons)
         });
@@ -818,7 +832,7 @@ bot.action(/^pay_method_(.+)$/, async (ctx) => {
             [Markup.button.callback('❌ Cancel', 'menu_add_balance')]
         ]);
 
-        await ctx.editMessageText(msg, {
+        await safeEditMessageText(ctx, msg, {
             parse_mode: 'Markdown',
             ...inlineKeyboard
         });
@@ -840,7 +854,7 @@ bot.action(/^admin_start_approve_(\d+)$/, async (ctx) => {
     ctx.session.step = 'admin_waiting_amount';
     ctx.session.targetUserIdForTopUp = targetUserId;
 
-    await ctx.editMessageText(
+    await safeEditMessageText(ctx, 
         `✍️ **Enter the custom amount to add** for user ID (\`${targetUserId}\`):\n` +
         `Send the number directly in chat (e.g., \`3.50\` or \`4.25\`).`,
         { parse_mode: 'Markdown' }
@@ -855,7 +869,7 @@ bot.action(/^admin_reject_(\d+)$/, async (ctx) => {
 
     const targetUserId = ctx.match[1];
     try {
-        await ctx.editMessageText(`❌ **Payment request for user (${targetUserId}) was rejected.**`);
+        await safeEditMessageText(ctx, `❌ **Payment request for user (${targetUserId}) was rejected.**`);
         try {
             await bot.telegram.sendMessage(targetUserId, `❌ **Your payment request was rejected.** Please contact support if you think this is a mistake.`);
         } catch (e) {}
@@ -870,7 +884,7 @@ bot.action('menu_buy_proxy', async (ctx) => {
         const servers = response.data.data.filter(s => s.has_capacity);
 
         if (servers.length === 0) {
-            return ctx.editMessageText(
+            return safeEditMessageText(ctx, 
                 '❌ No available servers currently.',
                 Markup.inlineKeyboard([[Markup.button.callback('⬅️ Main Menu', 'main_menu')]])
             );
@@ -890,7 +904,7 @@ bot.action('menu_buy_proxy', async (ctx) => {
 
         inlineButtons.push([Markup.button.callback('⬅️ Main Menu', 'main_menu')]);
 
-        await ctx.editMessageText(message, {
+        await safeEditMessageText(ctx, message, {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard(inlineButtons)
         });
@@ -937,7 +951,7 @@ bot.action(/^cnt_(.+)$/, async (ctx) => {
             Markup.button.callback('🏠 Main Menu', 'main_menu')
         ]);
 
-        await ctx.editMessageText(message, {
+        await safeEditMessageText(ctx, message, {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard(inlineButtons)
         });
@@ -984,7 +998,7 @@ bot.action(/^dur_([0-9a-fA-F]{24})$/, async (ctx) => {
             Markup.button.callback('🏠 Main Menu', 'main_menu')
         ]);
 
-        await ctx.editMessageText(message, {
+        await safeEditMessageText(ctx, message, {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard(inlineButtons)
         });
@@ -1010,7 +1024,7 @@ bot.action(/^srv_(\d+)_([0-9a-fA-F]{24})$/, async (ctx) => {
         ]
     ]);
 
-    await ctx.editMessageText(message, {
+    await safeEditMessageText(ctx, message, {
         parse_mode: 'Markdown',
         ...inlineKeyboard
     });
@@ -1034,7 +1048,7 @@ bot.action(/^proto_(\d+)_([0-9a-fA-F]{24})_(socks5|http)$/, async (ctx) => {
         [Markup.button.callback('❌ Cancel', 'menu_buy_proxy')]
     ]);
 
-    await ctx.editMessageText(promptMsg, {
+    await safeEditMessageText(ctx, promptMsg, {
         parse_mode: 'Markdown',
         ...inlineKeyboard
     });
@@ -1048,7 +1062,7 @@ bot.action('menu_proxies', async (ctx) => {
         const t = translations[lang] || translations['en'];
 
         if (!dbUser || !dbUser.proxies || dbUser.proxies.length === 0) {
-            return ctx.editMessageText(t.noProxies, 
+            return safeEditMessageText(ctx, t.noProxies, 
                 Markup.inlineKeyboard([[Markup.button.callback(lang === 'ar' ? '⬅️ القائمة الرئيسية' : '⬅️ Main Menu', 'main_menu')]]));
         }
         
@@ -1141,7 +1155,7 @@ async function refreshProxyMessage(ctx, publicId, lang) {
             ]
         ]);
 
-        await ctx.editMessageText(details, { parse_mode: 'Markdown', ...inlineKeyboard });
+        await safeEditMessageText(ctx, details, { parse_mode: 'Markdown', ...inlineKeyboard });
     } catch (e) {
         console.error('❌ Refresh Proxy Message Error:', e);
     }
@@ -1217,7 +1231,7 @@ bot.action(/^switchsrv_(.+)$/, async (ctx) => {
         });
         inlineButtons.push([Markup.button.callback('⬅️ Back', 'menu_proxies')]);
 
-        await ctx.editMessageText('🖥️ **Select target server to switch to:**', {
+        await safeEditMessageText(ctx, '🖥️ **Select target server to switch to:**', {
             parse_mode: 'Markdown',
             ...Markup.inlineKeyboard(inlineButtons)
         });
