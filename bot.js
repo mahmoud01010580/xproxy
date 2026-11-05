@@ -146,7 +146,7 @@ async function verifyCCPaymentTransaction(userTxId) {
     const appSecret = process.env.CCPAYMENT_APP_SECRET;
     
     const payload = {
-        record_id: userTxId // يمكن تعديلها إلى order_id حسب نوع الـ ID المستخدم
+        record_id: userTxId
     };
 
     const timestamp = Math.floor(Date.now() / 1000).toString();
@@ -236,16 +236,6 @@ mongoose.connect(process.env.MONGO_URI).then(async () => {
             title: 'Binance Pay (Auto-Verify)',
             recipientInfo: 'Binance Pay ID / Email',
             instructions: 'Send payment via Binance Pay, then copy your Transaction ID and send it here to add balance automatically.'
-        });
-    }
-
-    const ccpaymentMethod = await PaymentMethod.findOne({ code: 'ccpayment' });
-    if (!ccpaymentMethod) {
-        await PaymentMethod.create({
-            code: 'ccpayment',
-            title: 'CWallet (Auto-Verify)',
-            recipientInfo: 'CWallet / CCPayment ID',
-            instructions: 'Send payment via CWallet, then copy your Transaction ID / Record ID and send it here to add balance automatically.'
         });
     }
 }).catch(err => {
@@ -531,7 +521,7 @@ bot.on('text', async (ctx, next) => {
         } catch (e) {}
 
         let verification = { success: false };
-        let gatewayName = 'Binance Pay';
+        let gatewayName = selectedMethodTitle || 'Payment Gateway';
 
         if (selectedMethodCode && (selectedMethodCode.toLowerCase().includes('binance') || selectedMethodCode.toLowerCase().includes('bpay'))) {
             gatewayName = 'Binance Pay';
