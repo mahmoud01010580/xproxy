@@ -135,8 +135,8 @@ async function verifyPersonalBinancePay(userTxId) {
     }
 }
 
-// 2. دالة التحقق لمعاملات CWallet / CCPayment التلقائية (تم التعديل لتدعم Order ID)
-async function verifyCCPaymentTransaction(userOrderId) {
+// 2. دالة التحقق لمعاملات CWallet / CCPayment التلقائية
+async function verifyCCPaymentTransaction(userTxId) {
     if (!process.env.CCPAYMENT_APP_ID || !process.env.CCPAYMENT_APP_SECRET) {
         console.log('⚠️ CCPayment API keys are not configured in .env');
         return { success: false, reason: 'api_not_configured' };
@@ -145,9 +145,8 @@ async function verifyCCPaymentTransaction(userOrderId) {
     const appId = process.env.CCPAYMENT_APP_ID;
     const appSecret = process.env.CCPAYMENT_APP_SECRET;
     
-    // إعداد الـ Payload للتحقق باستخدام Order ID (كما في الصورة)
     const payload = {
-        order_id: userOrderId // استخدام order_id هنا ليتطابق مع الرقم اللي في الصورة
+        record_id: userTxId
     };
 
     const timestamp = Math.floor(Date.now() / 1000).toString();
@@ -183,7 +182,7 @@ async function verifyCCPaymentTransaction(userOrderId) {
                     success: true,
                     amount: parseFloat(data.amount),
                     currency: data.coin_symbol || 'USDT',
-                    orderId: data.order_id
+                    recordId: data.record_id
                 };
             } else {
                 return { success: false, reason: 'transaction_not_completed' };
@@ -516,7 +515,7 @@ bot.on('text', async (ctx, next) => {
         try {
             const existingTx = await Transaction.findOne({ prepayId: receiptText });
             if (existingTx) {
-                await ctx.reply('❌ **This Transaction ID / Order ID has already been used!**\nYou cannot reuse the same payment receipt twice.', { parse_mode: 'Markdown' });
+                await ctx.reply('❌ **This Transaction ID has already been used!**\nYou cannot reuse the same payment receipt twice.', { parse_mode: 'Markdown' });
                 return sendMainMenu(ctx);
             }
         } catch (e) {}
@@ -532,14 +531,13 @@ bot.on('text', async (ctx, next) => {
         else if (selectedMethodCode && (selectedMethodCode.toLowerCase().includes('ccpayment') || selectedMethodCode.toLowerCase().includes('cwallet'))) {
             gatewayName = 'CWallet (CCPayment)';
             await ctx.reply('⏳ **Verifying transaction via CWallet... Please wait.**', { parse_mode: 'Markdown' });
-            // استدعاء دالة التحقق الجديدة التي تدعم الـ Order ID
             verification = await verifyCCPaymentTransaction(receiptText);
         }
 
         if (verification.success) {
             try {
                 await Transaction.create({
-                    prepayId: receiptText, // حفظ الـ Order ID في الداتا بيز لمنع التكرار
+                    prepayId: receiptText,
                     telegramId: telegramId,
                     amount: verification.amount
                 });
@@ -560,7 +558,7 @@ bot.on('text', async (ctx, next) => {
                 
                 if (ADMIN_TELEGRAM_ID) {
                     try {
-                        await bot.telegram.sendMessage(ADMIN_TELEGRAM_ID, `⚡ **AUTO PAY APPROVED (${gatewayName})**\n- User: ${user.first_name} (@${user.username || 'N/A'})\n- Amount: $${verification.amount.toFixed(2)}\n- Order ID: \`${receiptText}\``, { parse_mode: 'Markdown' });
+                        await bot.telegram.sendMessage(ADMIN_TELEGRAM_ID, `⚡ **AUTO PAY APPROVED (${gatewayName})**\n- User: ${user.first_name} (@${user.username || 'N/A'})\n- Amount: $${verification.amount.toFixed(2)}\n- Transaction ID: \`${receiptText}\``, { parse_mode: 'Markdown' });
                     } catch (e) {}
                 }
                 return sendMainMenu(ctx);
@@ -575,7 +573,7 @@ bot.on('text', async (ctx, next) => {
             } catch (e) {}
 
             if (selectedMethodCode && (selectedMethodCode.toLowerCase().includes('binance') || selectedMethodCode.toLowerCase().includes('ccpayment') || selectedMethodCode.toLowerCase().includes('cwallet'))) {
-                await ctx.reply(`❌ **Transaction ID / Order ID is incorrect or not found / not completed yet!**\nPlease check the ID and try again, or your request has been forwarded for manual review.`, { parse_mode: 'Markdown' });
+                await ctx.reply(`❌ **Transaction ID is incorrect or not found / not completed yet!**\nPlease check the ID and try again, or your request has been forwarded for manual review.`, { parse_mode: 'Markdown' });
             } else {
                 await ctx.reply('✅ **Your payment request has been submitted successfully!**\nOur team will review your transaction and add the balance soon.', { parse_mode: 'Markdown' });
             }
@@ -893,7 +891,7 @@ bot.action(/^pay_method_(.+)$/, async (ctx) => {
         const msg = `📌 **Payment Method:** ${method.title}\n\n` +
                     `🔹 **Account / Number / ID:** \`${method.recipientInfo}\`\n\n` +
                     `📝 **Instructions:**\n${method.instructions}\n\n` +
-                    `⚠️ **Please send your Transaction ID / Order ID / Receipt text in the chat now:**`;
+                    `⚠️ **Please send your Transaction ID / Prepay ID / Receipt text in the chat now:**`;
 
         const inlineKeyboard = Markup.inlineKeyboard([
             [Markup.button.callback('❌ Cancel', 'menu_add_balance')]
