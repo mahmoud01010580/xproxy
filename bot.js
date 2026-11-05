@@ -19,6 +19,7 @@ function isEnglishOnly(text) {
     return /^[A-Za-z0-9_@#$.!-]+$/.test(text);
 }
 
+// دالة آمنة لتحديث رسائل تليجرام لمنع الـ Crash بسبب عدم وجود تغيير في النص
 async function safeEditMessageText(ctx, text, extra = {}) {
     try {
         return await ctx.editMessageText(text, extra);
@@ -86,8 +87,10 @@ const translations = {
     }
 };
 
+// 1. دالة التحقق لمعاملات Binance Personal Pay
 async function verifyPersonalBinancePay(userTxId) {
     if (!process.env.BINANCE_API_KEY || !process.env.BINANCE_SECRET_KEY) {
+        console.log('⚠️ Binance API keys are not configured in .env');
         return { success: false, reason: 'api_not_configured' };
     }
 
@@ -110,7 +113,8 @@ async function verifyPersonalBinancePay(userTxId) {
         });
 
         if (response.data && response.data.code === '000000' && Array.isArray(response.data.data)) {
-            const foundTx = response.data.data.find(tx => 
+            const transactions = response.data.data;
+            const foundTx = transactions.find(tx => 
                 tx.transactionId === userTxId || tx.prepayId === userTxId || tx.orderId === userTxId
             );
 
@@ -120,16 +124,18 @@ async function verifyPersonalBinancePay(userTxId) {
                     amount: parseFloat(foundTx.amount),
                     currency: foundTx.currency || 'USDT'
                 };
+            } else {
+                return { success: false, reason: 'transaction_not_found' };
             }
         }
-        return { success: false, reason: 'transaction_not_found' };
+        return { success: false, reason: 'api_failed' };
     } catch (error) {
-        console.error('❌ Binance API Error:', error.message);
+        console.error('❌ Binance Personal Pay API Error:', error.response?.data || error.message);
         return { success: false, reason: 'api_error' };
     }
 }
 
-// دالة التحقق المحدثة للتعامل مع الـ Order ID بشكل شامل
+// 2. دالة التحقق لمعاملات CWallet / CCPayment التلقائية (تم التعديل لتدعم Order ID)
 async function verifyCCPaymentTransaction(userOrderId) {
     if (!process.env.CCPAYMENT_APP_ID || !process.env.CCPAYMENT_APP_SECRET) {
         console.log('⚠️ CCPayment API keys are not configured in .env');
@@ -139,73 +145,56 @@ async function verifyCCPaymentTransaction(userOrderId) {
     const appId = process.env.CCPAYMENT_APP_ID;
     const appSecret = process.env.CCPAYMENT_APP_SECRET;
     
-    // المحاولة الأولى: الاستعلام المباشر باستخدام order_id
-    let payload = { order_id: userOrderId };
-    let timestamp = Math.floor(Date.now() / 1000).toString();
-    let signText = appId + timestamp + JSON.stringify(payload);
-    let sign = crypto.createHmac('sha256', appSecret).update(signText).digest('hex');
+    // إعداد الـ Payload للتحقق باستخدام Order ID (كما في الصورة)
+    const payload = {
+        order_id: userOrderId // استخدام order_id هنا ليتطابق مع الرقم اللي في الصورة
+    };
+
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const payloadStr = JSON.stringify(payload);
+    const signText = appId + timestamp + payloadStr;
+
+    const sign = crypto
+        .createHmac('sha256', appSecret)
+        .update(signText)
+        .digest('hex');
 
     try {
-        let response = await axios.post('https://ccpayment.com/api/v1/bill/deposit/info', payload, {
-            headers: {
-                'Appid': appId,
-                'Timestamp': timestamp,
-                'Sign': sign,
-                'User-Agent': 'CCPayment-Client/1.0',
-                'Content-Type': 'application/json'
-            },
-            timeout: 10000
-        });
+        const response = await axios.post(
+            'https://ccpayment.com/api/v1/bill/deposit/info', 
+            payload, 
+            {
+                headers: {
+                    'Appid': appId,
+                    'Timestamp': timestamp,
+                    'Sign': sign,
+                    'User-Agent': 'CCPayment-Client/1.0',
+                    'Content-Type': 'application/json'
+                },
+                timeout: 10000
+            }
+        );
 
         if (response.data && response.data.code === 200 && response.data.data) {
             const data = response.data.data;
+
             if (data.status === 'success' || data.status === 'completed') {
                 return {
                     success: true,
                     amount: parseFloat(data.amount),
                     currency: data.coin_symbol || 'USDT',
-                    orderId: data.order_id || userOrderId
+                    orderId: data.order_id
                 };
+            } else {
+                return { success: false, reason: 'transaction_not_completed' };
             }
         }
-    } catch (e) {
-        console.log('⚠️ First CCPayment attempt failed, trying alternative method...');
+        return { success: false, reason: 'transaction_not_found' };
+
+    } catch (error) {
+        console.error('❌ CCPayment API Error:', error.response?.data || error.message);
+        return { success: false, reason: 'api_error' };
     }
-
-    // المحاولة الثانية: الاستعلام باستخدام record_id احتياطياً لو الـ API يطلبها
-    try {
-        payload = { record_id: userOrderId };
-        timestamp = Math.floor(Date.now() / 1000).toString();
-        signText = appId + timestamp + JSON.stringify(payload);
-        sign = crypto.createHmac('sha256', appSecret).update(signText).digest('hex');
-
-        const response2 = await axios.post('https://ccpayment.com/api/v1/bill/deposit/info', payload, {
-            headers: {
-                'Appid': appId,
-                'Timestamp': timestamp,
-                'Sign': sign,
-                'User-Agent': 'CCPayment-Client/1.0',
-                'Content-Type': 'application/json'
-            },
-            timeout: 10000
-        });
-
-        if (response2.data && response2.data.code === 200 && response2.data.data) {
-            const data = response2.data.data;
-            if (data.status === 'success' || data.status === 'completed') {
-                return {
-                    success: true,
-                    amount: parseFloat(data.amount),
-                    currency: data.coin_symbol || 'USDT',
-                    orderId: userOrderId
-                };
-            }
-        }
-    } catch (e) {
-        console.error('❌ CCPayment Verification Error:', e.response?.data || e.message);
-    }
-
-    return { success: false, reason: 'transaction_not_found' };
 }
 
 function getCountryFlag(countryInput) {
@@ -543,13 +532,14 @@ bot.on('text', async (ctx, next) => {
         else if (selectedMethodCode && (selectedMethodCode.toLowerCase().includes('ccpayment') || selectedMethodCode.toLowerCase().includes('cwallet'))) {
             gatewayName = 'CWallet (CCPayment)';
             await ctx.reply('⏳ **Verifying transaction via CWallet... Please wait.**', { parse_mode: 'Markdown' });
+            // استدعاء دالة التحقق الجديدة التي تدعم الـ Order ID
             verification = await verifyCCPaymentTransaction(receiptText);
         }
 
         if (verification.success) {
             try {
                 await Transaction.create({
-                    prepayId: receiptText,
+                    prepayId: receiptText, // حفظ الـ Order ID في الداتا بيز لمنع التكرار
                     telegramId: telegramId,
                     amount: verification.amount
                 });
