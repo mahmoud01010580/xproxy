@@ -25,6 +25,7 @@ async function safeEditMessageText(ctx, text, extra = {}) {
         return await ctx.editMessageText(text, extra);
     } catch (error) {
         if (error.description && error.description.includes('message is not modified')) {
+            // تجاهل الخطأ بهدوء لأنه مجرد تكرار لنفس محتوى الرسالة
             try { await ctx.answerCbQuery(); } catch (e) {}
             return;
         }
@@ -87,7 +88,6 @@ const translations = {
     }
 };
 
-// 1. دالة التحقق لمعاملات Binance Personal Pay
 async function verifyPersonalBinancePay(userTxId) {
     if (!process.env.BINANCE_API_KEY || !process.env.BINANCE_SECRET_KEY) {
         console.log('⚠️ Binance API keys are not configured in .env');
@@ -131,67 +131,6 @@ async function verifyPersonalBinancePay(userTxId) {
         return { success: false, reason: 'api_failed' };
     } catch (error) {
         console.error('❌ Binance Personal Pay API Error:', error.response?.data || error.message);
-        return { success: false, reason: 'api_error' };
-    }
-}
-
-// 2. دالة التحقق لمعاملات CWallet / CCPayment التلقائية
-async function verifyCCPaymentTransaction(userTxId) {
-    if (!process.env.CCPAYMENT_APP_ID || !process.env.CCPAYMENT_APP_SECRET) {
-        console.log('⚠️ CCPayment API keys are not configured in .env');
-        return { success: false, reason: 'api_not_configured' };
-    }
-
-    const appId = process.env.CCPAYMENT_APP_ID;
-    const appSecret = process.env.CCPAYMENT_APP_SECRET;
-    
-    const payload = {
-        record_id: userTxId
-    };
-
-    const timestamp = Math.floor(Date.now() / 1000).toString();
-    const payloadStr = JSON.stringify(payload);
-    const signText = appId + timestamp + payloadStr;
-
-    const sign = crypto
-        .createHmac('sha256', appSecret)
-        .update(signText)
-        .digest('hex');
-
-    try {
-        const response = await axios.post(
-            'https://ccpayment.com/api/v1/bill/deposit/info', 
-            payload, 
-            {
-                headers: {
-                    'Appid': appId,
-                    'Timestamp': timestamp,
-                    'Sign': sign,
-                    'User-Agent': 'CCPayment-Client/1.0',
-                    'Content-Type': 'application/json'
-                },
-                timeout: 10000
-            }
-        );
-
-        if (response.data && response.data.code === 200 && response.data.data) {
-            const data = response.data.data;
-
-            if (data.status === 'success' || data.status === 'completed') {
-                return {
-                    success: true,
-                    amount: parseFloat(data.amount),
-                    currency: data.coin_symbol || 'USDT',
-                    recordId: data.record_id
-                };
-            } else {
-                return { success: false, reason: 'transaction_not_completed' };
-            }
-        }
-        return { success: false, reason: 'transaction_not_found' };
-
-    } catch (error) {
-        console.error('❌ CCPayment API Error:', error.response?.data || error.message);
         return { success: false, reason: 'api_error' };
     }
 }
@@ -423,13 +362,13 @@ bot.on('text', async (ctx, next) => {
             );
 
             const successMsg = `✅ **Proxy purchased successfully with your custom auth!**\n\n` +
-                `- **Protocol:** \`${proxy.protocol ? proxy.protocol.toUpperCase() : protocol.toUpperCase()}\`\n` +
-                `- **Host:** \`${proxy.host}\`\n` +
-                `- **Port:** \`${proxy.port}\`\n` +
-                `- **Username:** \`${proxy.username}\`\n` +
-                `- **Password:** \`${proxy.password}\`\n` +
-                `- **Paid Amount:** $${plan.myPriceUsd.toFixed(2)}\n` +
-                `- **New Balance:** $${dbUser.balance.toFixed(2)}`;
+                  `- **Protocol:** \`${proxy.protocol ? proxy.protocol.toUpperCase() : protocol.toUpperCase()}\`\n` +
+                  `- **Host:** \`${proxy.host}\`\n` +
+                  `- **Port:** \`${proxy.port}\`\n` +
+                  `- **Username:** \`${proxy.username}\`\n` +
+                  `- **Password:** \`${proxy.password}\`\n` +
+                  `- **Paid Amount:** $${plan.myPriceUsd.toFixed(2)}\n` +
+                  `- **New Balance:** $${dbUser.balance.toFixed(2)}`;
 
             return ctx.reply(successMsg, {
                 parse_mode: 'Markdown',
@@ -503,7 +442,7 @@ bot.on('text', async (ctx, next) => {
     }
 
     if (session.step === 'waiting_payment_receipt') {
-        const receiptText = text.trim();
+        const receiptText = text;
         const user = ctx.from;
         const selectedMethodCode = session.selectedPaymentMethodCode;
         const selectedMethodTitle = session.selectedPaymentMethod;
@@ -521,47 +460,47 @@ bot.on('text', async (ctx, next) => {
         } catch (e) {}
 
         let verification = { success: false };
-        let gatewayName = selectedMethodTitle || 'Payment Gateway';
 
         if (selectedMethodCode && (selectedMethodCode.toLowerCase().includes('binance') || selectedMethodCode.toLowerCase().includes('bpay'))) {
-            gatewayName = 'Binance Pay';
             await ctx.reply('⏳ **Verifying transaction via Personal Binance Pay... Please wait.**', { parse_mode: 'Markdown' });
+            
             verification = await verifyPersonalBinancePay(receiptText);
-        } 
-        else if (selectedMethodCode && (selectedMethodCode.toLowerCase().includes('ccpayment') || selectedMethodCode.toLowerCase().includes('cwallet'))) {
-            gatewayName = 'CWallet (CCPayment)';
-            await ctx.reply('⏳ **Verifying transaction via CWallet... Please wait.**', { parse_mode: 'Markdown' });
-            verification = await verifyCCPaymentTransaction(receiptText);
-        }
 
-        if (verification.success) {
-            try {
-                await Transaction.create({
-                    prepayId: receiptText,
-                    telegramId: telegramId,
-                    amount: verification.amount
-                });
-            } catch (dbErr) {
-                console.error('❌ Duplicate Transaction Creation Error:', dbErr);
-                await ctx.reply('❌ **Transaction already processed.** Duplicate payment rejected.', { parse_mode: 'Markdown' });
-                return sendMainMenu(ctx);
-            }
-
-            const updatedUser = await User.findOneAndUpdate(
-                { telegramId },
-                { $inc: { balance: verification.amount } },
-                { new: true }
-            );
-
-            if (updatedUser) {
-                await ctx.reply(`🎉 **Payment Verified Automatically via ${gatewayName}!**\n\n- **Added Amount:** $${verification.amount.toFixed(2)} ${verification.currency}\n- **New Balance:** $${updatedUser.balance.toFixed(2)}`, { parse_mode: 'Markdown' });
-                
-                if (ADMIN_TELEGRAM_ID) {
-                    try {
-                        await bot.telegram.sendMessage(ADMIN_TELEGRAM_ID, `⚡ **AUTO PAY APPROVED (${gatewayName})**\n- User: ${user.first_name} (@${user.username || 'N/A'})\n- Amount: $${verification.amount.toFixed(2)}\n- Transaction ID: \`${receiptText}\``, { parse_mode: 'Markdown' });
-                    } catch (e) {}
+            if (verification.success) {
+                try {
+                    await Transaction.create({
+                        prepayId: receiptText,
+                        telegramId: telegramId,
+                        amount: verification.amount
+                    });
+                } catch (dbErr) {
+                    console.error('❌ Duplicate Transaction Creation Error:', dbErr);
+                    await ctx.reply('❌ **Transaction already processed.** Duplicate payment rejected.', { parse_mode: 'Markdown' });
+                    return sendMainMenu(ctx);
                 }
-                return sendMainMenu(ctx);
+
+                const updatedUser = await User.findOneAndUpdate(
+                    { telegramId },
+                    { $inc: { balance: verification.amount } },
+                    { new: true }
+                );
+
+                if (updatedUser) {
+                    await ctx.reply(`🎉 **Payment Verified Automatically!**\n\n- **Added Amount:** $${verification.amount.toFixed(2)} ${verification.currency}\n- **New Balance:** $${updatedUser.balance.toFixed(2)}`, { parse_mode: 'Markdown' });
+                    
+                    if (ADMIN_TELEGRAM_ID) {
+                        try {
+                            await bot.telegram.sendMessage(ADMIN_TELEGRAM_ID, `⚡ **AUTO PAY APPROVED (Binance Personal)**\n- User: ${user.first_name} (@${user.username || 'N/A'})\n- Amount: $${verification.amount.toFixed(2)}\n- Transaction ID: \`${receiptText}\``, { parse_mode: 'Markdown' });
+                        } catch (e) {}
+                    }
+                    return sendMainMenu(ctx);
+                }
+            } else {
+                if (verification.reason === 'transaction_not_found') {
+                    await ctx.reply('❌ **Transaction ID is incorrect or not found in my Binance account!**\nPlease check the ID and try again.', { parse_mode: 'Markdown' });
+                } else {
+                    await ctx.reply('⚠️ **Error connecting to Binance API.** Your request has been forwarded to the admin for manual review.', { parse_mode: 'Markdown' });
+                }
             }
         } else {
             try {
@@ -572,20 +511,16 @@ bot.on('text', async (ctx, next) => {
                 });
             } catch (e) {}
 
-            if (selectedMethodCode && (selectedMethodCode.toLowerCase().includes('binance') || selectedMethodCode.toLowerCase().includes('ccpayment') || selectedMethodCode.toLowerCase().includes('cwallet'))) {
-                await ctx.reply(`❌ **Transaction ID is incorrect or not found / not completed yet!**\nPlease check the ID and try again, or your request has been forwarded for manual review.`, { parse_mode: 'Markdown' });
-            } else {
-                await ctx.reply('✅ **Your payment request has been submitted successfully!**\nOur team will review your transaction and add the balance soon.', { parse_mode: 'Markdown' });
-            }
+            await ctx.reply('✅ **Your payment request has been submitted successfully!**\nOur team will review your transaction and add the balance soon.', { parse_mode: 'Markdown' });
         }
         
         if (ADMIN_TELEGRAM_ID && (!verification || !verification.success)) {
             const adminMsg = `🔔 **New Balance Top-Up Request!**\n\n` +
-                        `- **User Name:** ${user.first_name || 'N/A'}\n` +
-                        `- **Username:** @${user.username || 'No username'}\n` +
-                        `- **Telegram ID:** \`${user.id}\`\n` +
-                        `- **Method:** ${selectedMethodTitle}\n` +
-                        `- **Receipt/ID:** \`${receiptText}\``;
+                            `- **User Name:** ${user.first_name || 'N/A'}\n` +
+                            `- **Username:** @${user.username || 'No username'}\n` +
+                            `- **Telegram ID:** \`${user.id}\`\n` +
+                            `- **Method:** ${selectedMethodTitle}\n` +
+                            `- **Receipt/ID:** \`${receiptText}\``;
 
             const adminKeyboard = Markup.inlineKeyboard([
                 [
