@@ -7,7 +7,8 @@ const userSchema = new mongoose.Schema({
     name: { type: String, default: 'Client' },
     balance: { type: Number, default: 0.00 },
     proxies: { type: Array, default: [] },
-    language: { type: String, default: 'en' } // 'en' للإنجليزية كـ أساسي أو 'ar' للعربية
+    language: { type: String, default: 'en' }, // 'en' للإنجليزية أو 'ar' للعربية
+    lastCouponUsedAt: { type: Date, default: null } // ⏱️ وقت آخر كوبون (Cooldown ساعة)
 });
 
 const planSchema = new mongoose.Schema({
@@ -29,7 +30,14 @@ const supportSchema = new mongoose.Schema({
     title: { type: String, default: 'Support' }
 });
 
-// جدول سجل المعاملات الناجحة لمنع تكرار الـ Prepay ID نهائياً
+// 💻 جدول رسالة برمجة المواقع (قابلة للتعديل من الداتابيز مباشرة)
+const serviceMessageSchema = new mongoose.Schema({
+    serviceCode: { type: String, required: true, unique: true, default: 'web_dev' },
+    messageAr: { type: String, required: true },
+    messageEn: { type: String, required: true }
+});
+
+// جدول سجل المعاملات لمنع تكرار الـ Prepay ID
 const transactionSchema = new mongoose.Schema({
     prepayId: { type: String, required: true, unique: true },
     telegramId: { type: Number, required: true },
@@ -37,12 +45,12 @@ const transactionSchema = new mongoose.Schema({
     createdAt: { type: Date, default: Date.now }
 });
 
-// 🎟️ جدول الكوبونات الجديد
+// 🎟️ جدول الكوبونات
 const couponSchema = new mongoose.Schema({
     code: { type: String, required: true, unique: true, index: true },
-    amount: { type: Number, required: true }, // القيمة كـ Double / Number
+    amount: { type: Number, required: true },
     isUsed: { type: Boolean, default: false },
-    usedBy: { type: String, default: null }, // Telegram ID لمن استهلك الكوبون
+    usedBy: { type: String, default: null },
     usedAt: { type: Date, default: null },
     createdAt: { type: Date, default: Date.now }
 });
@@ -51,7 +59,8 @@ const User = mongoose.model('User', userSchema);
 const Plan = mongoose.model('Plan', planSchema);
 const PaymentMethod = mongoose.model('PaymentMethod', paymentMethodSchema);
 const Support = mongoose.model('Support', supportSchema);
+const ServiceMessage = mongoose.model('ServiceMessage', serviceMessageSchema);
 const Transaction = mongoose.model('Transaction', transactionSchema);
 const Coupon = mongoose.model('Coupon', couponSchema);
 
-module.exports = { User, Plan, PaymentMethod, Support, Transaction, Coupon };
+module.exports = { User, Plan, PaymentMethod, Support, ServiceMessage, Transaction, Coupon };
