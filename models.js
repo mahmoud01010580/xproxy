@@ -37,10 +37,21 @@ const transactionSchema = new mongoose.Schema({
     createdAt: { type: Date, default: Date.now }
 });
 
+// 🎟️ جدول الكوبونات الجديد
+const couponSchema = new mongoose.Schema({
+    code: { type: String, required: true, unique: true, index: true },
+    amount: { type: Number, required: true }, // القيمة كـ Double / Number
+    isUsed: { type: Boolean, default: false },
+    usedBy: { type: String, default: null }, // Telegram ID لمن استهلك الكوبون
+    usedAt: { type: Date, default: null },
+    createdAt: { type: Date, default: Date.now }
+});
+
 const User = mongoose.model('User', userSchema);
 const Plan = mongoose.model('Plan', planSchema);
 const PaymentMethod = mongoose.model('PaymentMethod', paymentMethodSchema);
 const Support = mongoose.model('Support', supportSchema);
 const Transaction = mongoose.model('Transaction', transactionSchema);
+const Coupon = mongoose.model('Coupon', couponSchema);
 
-module.exports = { User, Plan, PaymentMethod, Support, Transaction };
+module.exports = { User, Plan, PaymentMethod, Support, Transaction, Coupon };

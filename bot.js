@@ -3,7 +3,8 @@ const { Telegraf, Markup, session } = require('telegraf');
 const axios = require('axios');
 const mongoose = require('mongoose');
 const crypto = require('crypto');
-const { User, Plan, PaymentMethod, Support, Transaction } = require('./models');
+// ⚠️ تأكد من إضافة Coupon هنا بجانب باقي الموديلز المستوردة
+const { User, Plan, PaymentMethod, Support, Transaction, Coupon } = require('./models');
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
 const API_BASE_URL = process.env.API_BASE_URL;
@@ -25,7 +26,6 @@ async function safeEditMessageText(ctx, text, extra = {}) {
         return await ctx.editMessageText(text, extra);
     } catch (error) {
         if (error.description && error.description.includes('message is not modified')) {
-            // تجاهل الخطأ بهدوء لأنه مجرد تكرار لنفس محتوى الرسالة
             try { await ctx.answerCbQuery(); } catch (e) {}
             return;
         }
@@ -43,6 +43,7 @@ const translations = {
         support: '🛠️ Support',
         profileLedger: '👤 Profile & Ledger',
         changeLang: '🌐 Change Language',
+        couponMenu: '🎁 Redeem Coupon',
         mainMenu: '🏠 Main Menu',
         back: '⬅️ Back',
         proxyInfoTitle: '🌐 Active Proxy Information',
@@ -69,6 +70,7 @@ const translations = {
         support: '🛠️ الدعم الفني',
         profileLedger: '👤 الحساب والسجل',
         changeLang: '🌐 تغيير اللغة (Language)',
+        couponMenu: '🎁 استرداد كوبون',
         mainMenu: '🏠 القائمة الرئيسية',
         back: '⬅️ رجوع',
         proxyInfoTitle: '🌐 معلومات البروكسي النشط',
@@ -362,13 +364,13 @@ bot.on('text', async (ctx, next) => {
             );
 
             const successMsg = `✅ **Proxy purchased successfully with your custom auth!**\n\n` +
-                  `- **Protocol:** \`${proxy.protocol ? proxy.protocol.toUpperCase() : protocol.toUpperCase()}\`\n` +
-                  `- **Host:** \`${proxy.host}\`\n` +
-                  `- **Port:** \`${proxy.port}\`\n` +
-                  `- **Username:** \`${proxy.username}\`\n` +
-                  `- **Password:** \`${proxy.password}\`\n` +
-                  `- **Paid Amount:** $${plan.myPriceUsd.toFixed(2)}\n` +
-                  `- **New Balance:** $${dbUser.balance.toFixed(2)}`;
+                `- **Protocol:** \`${proxy.protocol ? proxy.protocol.toUpperCase() : protocol.toUpperCase()}\`\n` +
+                `- **Host:** \`${proxy.host}\`\n` +
+                `- **Port:** \`${proxy.port}\`\n` +
+                `- **Username:** \`${proxy.username}\`\n` +
+                `- **Password:** \`${proxy.password}\`\n` +
+                `- **Paid Amount:** $${plan.myPriceUsd.toFixed(2)}\n` +
+                `- **New Balance:** $${dbUser.balance.toFixed(2)}`;
 
             return ctx.reply(successMsg, {
                 parse_mode: 'Markdown',
@@ -578,6 +580,121 @@ bot.on('text', async (ctx, next) => {
         return;
     }
 
+    // -------------------------------------------------------------
+    // خطوات إنشاء الكوبونات (للأدمن)
+    // -------------------------------------------------------------
+    if (session.step === 'admin_waiting_coupon_count' && ADMIN_TELEGRAM_ID && telegramId.toString() === ADMIN_TELEGRAM_ID) {
+        const count = parseInt(text);
+        if (isNaN(count) || count <= 0) {
+            return ctx.reply('❌ Please enter a valid positive number for the count (e.g., 5):');
+        }
+
+        session.couponCount = count;
+        session.step = 'admin_waiting_coupon_amount';
+        return ctx.reply('💰 Great! Now, what is the **amount (price)** in USD for each coupon? (e.g., `3.00` or `5.50`):', { parse_mode: 'Markdown' });
+    }
+
+    if (session.step === 'admin_waiting_coupon_amount' && ADMIN_TELEGRAM_ID && telegramId.toString() === ADMIN_TELEGRAM_ID) {
+        const amount = parseFloat(text);
+        if (isNaN(amount) || amount <= 0) {
+            return ctx.reply('❌ Please enter a valid double amount (e.g., 3.50):');
+        }
+
+        const count = session.couponCount || 1;
+        session.step = null;
+        session.couponCount = null;
+
+        try {
+            const createdCoupons = [];
+            for (let i = 0; i < count; i++) {
+                const randomPart = crypto.randomBytes(4).toString('hex').toUpperCase();
+                const couponCode = `${randomPart}`;
+
+                const newCoupon = await Coupon.create({
+                    code: couponCode,
+                    amount: amount,
+                    isUsed: false
+                });
+                createdCoupons.push(newCoupon.code);
+            }
+
+            await ctx.reply(`✅ **Successfully created ${count} coupons!**\nAmount per coupon: **$${amount.toFixed(2)}**\n\nSending them to you in separate messages now:`, { parse_mode: 'Markdown' });
+
+            for (const code of createdCoupons) {
+                await bot.telegram.sendMessage(telegramId, `🎟️ \`${code}\``, { parse_mode: 'Markdown' });
+            }
+
+            return sendMainMenu(ctx);
+        } catch (error) {
+            console.error('❌ Coupon Generation Error:', error);
+            session.step = null;
+            return ctx.reply('❌ An error occurred while generating coupons.');
+        }
+    }
+
+    // -------------------------------------------------------------
+    // استخدام واسترداد الكوبون (للمستخدمين العاديين)
+    // -------------------------------------------------------------
+    if (session.step === 'waiting_coupon_redeem') {
+        const couponCodeInput = text.trim();
+        session.step = null;
+
+        try {
+            const coupon = await Coupon.findOneAndUpdate(
+                { code: couponCodeInput, isUsed: false },
+                { $set: { isUsed: true, usedBy: telegramId.toString(), usedAt: new Date() } },
+                { new: true }
+            );
+
+            if (!coupon) {
+                return ctx.reply('❌ **This coupon is invalid, expired, or has already been used by someone else!**', {
+                    parse_mode: 'Markdown',
+                    ...Markup.inlineKeyboard([[Markup.button.callback('⬅️ Main Menu', 'main_menu')]])
+                });
+            }
+
+            const updatedUser = await User.findOneAndUpdate(
+                { telegramId },
+                { $inc: { balance: coupon.amount } },
+                { new: true }
+            );
+
+            if (updatedUser) {
+                await ctx.reply(
+                    `🎉 **Successfully Redeemed Coupon!**\n\n` +
+                    `- **Added Balance:** $${coupon.amount.toFixed(2)}\n` +
+                    `- **New Total Balance:** $${updatedUser.balance.toFixed(2)}`,
+                    {
+                        parse_mode: 'Markdown',
+                        ...Markup.inlineKeyboard([[Markup.button.callback('⬅️ Main Menu', 'main_menu')]])
+                    }
+                );
+
+                if (ADMIN_TELEGRAM_ID) {
+                    try {
+                        const userObj = ctx.from;
+                        await bot.telegram.sendMessage(
+                            ADMIN_TELEGRAM_ID,
+                            `🔔 **Coupon Redeemed!**\n` +
+                            `- User: ${userObj.first_name} (@${userObj.username || 'N/A'})\n` +
+                            `- Amount: $${coupon.amount.toFixed(2)}\n` +
+                            `- Code: \`${coupon.code}\``,
+                            { parse_mode: 'Markdown' }
+                        );
+                    } catch (e) {}
+                }
+            } else {
+                return ctx.reply('❌ Account not found. Please start the bot using /start first.');
+            }
+
+        } catch (error) {
+            console.error('❌ Redeem Coupon Error:', error);
+            return ctx.reply('❌ An error occurred while redeeming the coupon. Try again later.');
+        }
+
+        return;
+    }
+
     return next();
 });
 
@@ -630,10 +747,11 @@ const sendMainMenu = async (ctx) => {
             Markup.button.callback(t.addBalance, 'menu_add_balance')
         ],
         [
-            Markup.button.callback(t.plans, 'menu_plans'),
-            Markup.button.callback(t.support, 'menu_support')
+            Markup.button.callback(t.couponMenu, 'menu_redeem_coupon'),
+            Markup.button.callback(t.plans, 'menu_plans')
         ],
         [
+            Markup.button.callback(t.support, 'menu_support'),
             Markup.button.callback(t.changeLang, 'change_language')
         ]
     ]);
@@ -678,7 +796,10 @@ bot.action('menu_profile', async (ctx) => {
         ];
 
         if (isAdmin) {
-            keyboardButtons.unshift([Markup.button.callback(lang === 'ar' ? '📜 سجل المعاملات' : '📜 View Ledger History', 'menu_ledger')]);
+            keyboardButtons.unshift([
+                Markup.button.callback(lang === 'ar' ? '📜 سجل المعاملات' : '📜 View Ledger History', 'menu_ledger'),
+                Markup.button.callback(lang === 'ar' ? '🎟️ إنشاء كوبونات' : '🎟️ Create Coupons', 'admin_start_coupons')
+            ]);
         }
 
         await safeEditMessageText(ctx, message, {
@@ -688,6 +809,46 @@ bot.action('menu_profile', async (ctx) => {
     } catch (error) {
         console.error('❌ Profile Error:', error);
         try { await ctx.answerCbQuery('❌ Error loading profile data', { show_alert: true }); } catch (e) {}
+    }
+});
+
+// أذرع الأدمن لإنشاء الكوبونات
+bot.action('admin_start_coupons', async (ctx) => {
+    const telegramId = ctx.from.id;
+    if (!ADMIN_TELEGRAM_ID || telegramId.toString() !== ADMIN_TELEGRAM_ID.toString()) {
+        return ctx.answerCbQuery('❌ Unauthorized!', { show_alert: true });
+    }
+
+    if (!ctx.session) ctx.session = {};
+    ctx.session.step = 'admin_waiting_coupon_count';
+
+    await safeEditMessageText(ctx, 
+        '🎟️ **Coupon Creation Wizard**\n\n' +
+        'How many coupons do you want to create?\n' +
+        '*(Send the number directly in the chat, e.g., `5`)*',
+        { parse_mode: 'Markdown', ...Markup.inlineKeyboard([[Markup.button.callback('❌ Cancel', 'menu_profile')]]) }
+    );
+});
+
+bot.action('menu_redeem_coupon', async (ctx) => {
+    try {
+        if (!ctx.session) ctx.session = {};
+        ctx.session.step = 'waiting_coupon_redeem';
+
+        const msg = '🎁 **Redeem a Coupon Code**\n\n' +
+                    'Please send your coupon code as a text message in the chat now:';
+
+        const inlineKeyboard = Markup.inlineKeyboard([
+            [Markup.button.callback('❌ Cancel', 'main_menu')]
+        ]);
+
+        await safeEditMessageText(ctx, msg, {
+            parse_mode: 'Markdown',
+            ...inlineKeyboard
+        });
+    } catch (error) {
+        console.error('❌ Redeem Coupon Menu Error:', error);
+        try { await ctx.answerCbQuery('❌ An error occurred', { show_alert: true }); } catch (e) {}
     }
 });
 
@@ -711,7 +872,7 @@ bot.action('menu_ledger', async (ctx) => {
             message += 'No transactions found or Ledger API unavailable.';
         } else {
             items.slice(0, 5).forEach((item, index) => {
-                message += `${index + 1}. **${item.reason || 'N/A'}** (${item.direction || 'N/A'})\n   - Amount: $${item.amount_usd || item.amount || 0}\n   - Balance After: $${item.balance_after_usd || 0}\n   - Date: ${item.created_at || 'N/A'}\n\n`;
+                message += `${index + 1}. **${item.reason || 'N/A'}** (${item.direction || 'N/A'})\n  - Amount: $${item.amount_usd || item.amount || 0}\n  - Balance After: $${item.balance_after_usd || 0}\n  - Date: ${item.created_at || 'N/A'}\n\n`;
             });
         }
 
