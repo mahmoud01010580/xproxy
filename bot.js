@@ -64,6 +64,7 @@ const translations = {
         back: '⬅️ Back',
         proxyInfoTitle: '🌐 Active Proxy Information',
         protocol: 'Protocol',
+        server: 'Server / Location',
         host: 'Host (IP)',
         port: 'Port',
         username: 'Username',
@@ -96,6 +97,7 @@ const translations = {
         back: '⬅️ رجوع',
         proxyInfoTitle: '🌐 معلومات البروكسي النشط',
         protocol: 'البروتوكول',
+        server: 'السيرفر / الموقع',
         host: 'الآيبى (Host)',
         port: 'البورت (Port)',
         username: 'اسم المستخدم',
@@ -178,6 +180,26 @@ function getCountryFlag(countryInput) {
 
     const codePoints = code.split('').map(char => 127397 + char.charCodeAt(0));
     return String.fromCodePoint(...codePoints);
+}
+
+// دالة مساعدة لتنسيق اسم السيرفر وموقعه من بيانات الـ API
+function formatServerDisplay(proxy) {
+    if (!proxy) return 'N/A';
+    const serverObj = proxy.server || proxy.server_info || {};
+    const country = cleanServerText(proxy.country || serverObj.country || '');
+    const city = cleanServerText(proxy.city || serverObj.city || serverObj.label || '');
+    const flag = getCountryFlag(country);
+
+    if (country && city) {
+        return `${flag} ${country} (${city})`;
+    } else if (country) {
+        return `${flag} ${country}`;
+    } else if (city) {
+        return `🖥️ ${city}`;
+    } else if (proxy.server_id) {
+        return `Server #${proxy.server_id}`;
+    }
+    return 'N/A';
 }
 
 mongoose.connect(process.env.MONGO_URI).then(async () => {
@@ -439,9 +461,12 @@ bot.on('text', async (ctx, next) => {
                 { $push: { proxies: proxy.public_id } }
             );
 
+            const serverName = formatServerDisplay(proxy);
+
             const successMsg = userLang === 'ar'
                 ? `✅ **تم شراء البروكسي بنجاح بالبيانات المخصصة!**\n\n` +
                   `- **البروتوكول:** \`${proxy.protocol ? proxy.protocol.toUpperCase() : protocol.toUpperCase()}\`\n` +
+                  `- **السيرفر:** \`${serverName}\`\n` +
                   `- **الآيبي (Host):** \`${proxy.host}\`\n` +
                   `- **البورت:** \`${proxy.port}\`\n` +
                   `- **اسم المستخدم:** \`${proxy.username}\`\n` +
@@ -450,6 +475,7 @@ bot.on('text', async (ctx, next) => {
                   `- **رصيدك الجديد:** $${dbUser.balance.toFixed(2)}`
                 : `✅ **Proxy purchased successfully with your custom auth!**\n\n` +
                   `- **Protocol:** \`${proxy.protocol ? proxy.protocol.toUpperCase() : protocol.toUpperCase()}\`\n` +
+                  `- **Server:** \`${serverName}\`\n` +
                   `- **Host:** \`${proxy.host}\`\n` +
                   `- **Port:** \`${proxy.port}\`\n` +
                   `- **Username:** \`${proxy.username}\`\n` +
@@ -658,7 +684,6 @@ bot.on('text', async (ctx, next) => {
         return;
     }
 
-    // خطوات إنشاء الكوبونات (للأدمن)
     if (session.step === 'admin_waiting_coupon_count' && ADMIN_TELEGRAM_ID && telegramId.toString() === ADMIN_TELEGRAM_ID) {
         const count = parseInt(text);
         if (isNaN(count) || count <= 0) {
@@ -707,7 +732,6 @@ bot.on('text', async (ctx, next) => {
         }
     }
 
-    // استرداد الكوبون مع حماية الـ Cooldown (ساعة واحدة) وتوافق اللغات
     if (session.step === 'waiting_coupon_redeem') {
         const couponCodeInput = text.trim();
         session.step = null;
@@ -721,7 +745,7 @@ bot.on('text', async (ctx, next) => {
             if (dbUser.lastCouponUsedAt) {
                 const now = new Date();
                 const diffMs = now - new Date(dbUser.lastCouponUsedAt);
-                const cooldownTime = 60 * 60 * 1000; // ساعة كاملة
+                const cooldownTime = 60 * 60 * 1000;
 
                 if (diffMs < cooldownTime) {
                     const remainingMinutes = Math.ceil((cooldownTime - diffMs) / (60 * 1000));
@@ -837,28 +861,23 @@ const sendMainMenu = async (ctx) => {
     const t = translations[lang] || translations['en'];
     const welcomeMsg = t.welcomeMain;
 
-  const keyboard = Markup.inlineKeyboard([
-        // الصف الأول: الملف الشخصي والشراء
+    const keyboard = Markup.inlineKeyboard([
         [
             Markup.button.callback(t.profileLedger, 'menu_profile'),
             Markup.button.callback(t.buyProxy, 'menu_buy_proxy')
         ],
-        // الصف الثاني: بروكسياتي وشحن الرصيد
         [
             Markup.button.callback(t.myProxies, 'menu_proxies'),
             Markup.button.callback(t.addBalance, 'menu_add_balance')
         ],
-        // الصف الثالث: استرداد الكوبون والخطط
         [
             Markup.button.callback(t.couponMenu, 'menu_redeem_coupon'),
             Markup.button.callback(t.plans, 'menu_plans')
         ],
-        // الصف الرابع: برمجة مواقع والدعم الفني
         [
             Markup.button.callback(t.webDev, 'menu_web_development'),
             Markup.button.callback(t.support, 'menu_support')
         ],
-        // الصف الخامس (الأخير): زرار تغيير اللغة كـ مربع طويل بمفرده
         [
             Markup.button.callback(t.changeLang, 'change_language')
         ]
@@ -872,7 +891,6 @@ const sendMainMenu = async (ctx) => {
 
 bot.action('main_menu', (ctx) => sendMainMenu(ctx));
 
-// 💻 هاندلر زرار برمجة مواقع (يجلب النص من الداتابيز حسب لغة المستخدم)
 bot.action('menu_web_development', async (ctx) => {
     try {
         const telegramId = ctx.from.id;
@@ -1380,9 +1398,12 @@ bot.action('menu_proxies', async (ctx) => {
 
                 activeProxiesOnServer.push(publicId);
 
+                const serverName = formatServerDisplay(proxy);
+
                 const details = `🌐 **${t.proxyInfoTitle}**\n\n` +
+                            `🖥️ **${t.server}:** \`${serverName}\`\n` +
                             `🔌 **${t.protocol}:** \`${proxy.protocol ? proxy.protocol.toUpperCase() : 'N/A'}\`\n` +
-                            `🖥️ **${t.host}:** \`${proxy.host}\`\n` +
+                            `🌐 **${t.host}:** \`${proxy.host}\`\n` +
                             `🚪 **${t.port}:** \`${proxy.port}\`\n` +
                             `👤 **${t.username}:** \`${proxy.username}\`\n` +
                             `🔑 **${t.password}:** \`${proxy.password}\`\n` +
@@ -1431,9 +1452,12 @@ async function refreshProxyMessage(ctx, publicId, lang) {
         const proxy = res.data.data;
         const t = translations[lang] || translations['en'];
 
+        const serverName = formatServerDisplay(proxy);
+
         const details = `🌐 **${t.proxyInfoTitle}**\n\n` +
+                    `🖥️ **${t.server}:** \`${serverName}\`\n` +
                     `🔌 **${t.protocol}:** \`${proxy.protocol ? proxy.protocol.toUpperCase() : 'N/A'}\`\n` +
-                    `🖥️ **${t.host}:** \`${proxy.host}\`\n` +
+                    `🌐 **${t.host}:** \`${proxy.host}\`\n` +
                     `🚪 **${t.port}:** \`${proxy.port}\`\n` +
                     `👤 **${t.username}:** \`${proxy.username}\`\n` +
                     `🔑 **${t.password}:** \`${proxy.password}\`\n` +
@@ -1462,19 +1486,56 @@ async function refreshProxyMessage(ctx, publicId, lang) {
 bot.action(/^ext_(.+)$/, async (ctx) => {
     const publicId = ctx.match[1];
     const telegramId = ctx.from.id;
+
     if (!(await verifyProxyOwnership(telegramId, publicId))) {
         return ctx.answerCbQuery('❌ Unauthorized action!', { show_alert: true });
     }
+
     try {
-        await api.post(`/proxies/${publicId}/extend`, { duration_hours: 24 });
         const dbUser = await User.findOne({ telegramId });
-        const lang = dbUser ? dbUser.language : 'en';
-        
-        await refreshProxyMessage(ctx, publicId, lang);
-        try { await ctx.answerCbQuery('Proxy extended successfully 🚀', { show_alert: true }); } catch (e) {}
+        const lang = dbUser && dbUser.language ? dbUser.language : 'en';
+
+        const plan = await Plan.findOne({ durationHours: 24 }) || await Plan.findOne({});
+        if (!plan) {
+            return ctx.answerCbQuery(lang === 'ar' ? '❌ خطة التمديد غير متوفرة حالياً.' : '❌ Extension plan not found.', { show_alert: true });
+        }
+
+        const extensionCost = plan.myPriceUsd;
+
+        const updatedUser = await User.findOneAndUpdate(
+            { telegramId, balance: { $gte: extensionCost } },
+            { $inc: { balance: -extensionCost } },
+            { new: true }
+        );
+
+        if (!updatedUser) {
+            const insufficientMsg = lang === 'ar'
+                ? `❌ عذراً، رصيدك غير كافٍ لتمديد البروكسي!\nتكلفة التمديد: $${extensionCost.toFixed(2)}\nرصيدك الحالي: $${dbUser ? dbUser.balance.toFixed(2) : '0.00'}`
+                : `❌ Insufficient balance to extend proxy!\nExtension cost: $${extensionCost.toFixed(2)}\nCurrent balance: $${dbUser ? dbUser.balance.toFixed(2) : '0.00'}`;
+            
+            return ctx.answerCbQuery(insufficientMsg, { show_alert: true });
+        }
+
+        try {
+            await api.post(`/proxies/${publicId}/extend`, { duration_hours: 24 });
+            
+            await refreshProxyMessage(ctx, publicId, lang);
+
+            const successMsg = lang === 'ar'
+                ? `🎉 تم تمديد البروكسي بنجاح 24 ساعة!\nتم خصم: $${extensionCost.toFixed(2)}\nرصيدك المتبقي: $${updatedUser.balance.toFixed(2)}`
+                : `🎉 Proxy extended by 24h!\nDeducted: $${extensionCost.toFixed(2)}\nNew Balance: $${updatedUser.balance.toFixed(2)}`;
+
+            try { await ctx.answerCbQuery(successMsg, { show_alert: true }); } catch (e) {}
+
+        } catch (apiError) {
+            await User.updateOne({ telegramId }, { $inc: { balance: extensionCost } });
+            
+            const errMsg = apiError.response?.data?.message || 'Error extending proxy via API';
+            try { await ctx.answerCbQuery(`❌ ${errMsg}`, { show_alert: true }); } catch (e) {}
+        }
+
     } catch (error) {
-        const errMsg = error.response?.data?.message || 'Error extending proxy';
-        try { await ctx.answerCbQuery(`❌ ${errMsg}`, { show_alert: true }); } catch (e) {}
+        try { await ctx.answerCbQuery('❌ Error processing proxy extension.', { show_alert: true }); } catch (e) {}
     }
 });
 
