@@ -182,7 +182,6 @@ function getCountryFlag(countryInput) {
     return String.fromCodePoint(...codePoints);
 }
 
-// دالة مساعدة لتنسيق اسم السيرفر وموقعه من بيانات الـ API
 function formatServerDisplay(proxy) {
     if (!proxy) return 'N/A';
     const serverObj = proxy.server || proxy.server_info || {};
@@ -281,6 +280,8 @@ bot.start(async (ctx) => {
 });
 
 bot.action('check_subscription', async (ctx) => {
+    if (!ctx.session) ctx.session = {}; // 👈 تم الحل هنا
+
     const telegramId = ctx.from.id;
     const dbUser = await User.findOne({ telegramId });
     const lang = dbUser && dbUser.language ? dbUser.language : 'en';
